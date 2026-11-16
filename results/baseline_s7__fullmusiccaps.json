@@ -1,0 +1,13 @@
+{
+  "gen_dir": "outputs/baseline_s7",
+  "ref_dir": "data/audio_mp3",
+  "audio_length": 10.0,
+  "clap_ckpt": "music_audioset_epoch_15_esc_90.14.pt",
+  "n_gen": 100,
+  "n_ref": 5367,
+  "FD-VGG": 7.7189701291475075,
+  "FD-PaSST": 836.7162968010114,
+  "paired": false,
+  "n_pairs": 0,
+  "KL-PaSST": null
+}

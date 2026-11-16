@@ -1,0 +1,254 @@
+diff -ruN third_party/av-benchmark.orig/av_bench/data/audio_dataset.py third_party/av-benchmark/av_bench/data/audio_dataset.py
+--- third_party/av-benchmark.orig/av_bench/data/audio_dataset.py	2026-11-12 15:23:33.003110876 +0800
++++ third_party/av-benchmark/av_bench/data/audio_dataset.py	2026-11-12 15:24:48.129524146 +0800
+@@ -3,9 +3,13 @@
+ from typing import List
+ 
+ import torch
++import soundfile as sf
+ import torchaudio
+ import torchvision.transforms.v2 as v2
+-from pytorchvideo.data.clip_sampling import ConstantClipsPerVideoSampler
++try:  # only needed by the ImageBind/video datasets (not used for FD/KL/CLAP)
++    from pytorchvideo.data.clip_sampling import ConstantClipsPerVideoSampler
++except ImportError:
++    ConstantClipsPerVideoSampler = None
+ from torch.utils.data import Dataset
+ 
+ log = logging.getLogger()
+@@ -122,8 +126,9 @@
+         return len(self.datalist)
+ 
+     def read_from_file(self, audio_file):
+-        waveform, sample_rate = torchaudio.load(audio_file)
+-        waveform = waveform.mean(dim=0)  # mono
++        # PATCH: soundfile instead of torchaudio.load (no ffmpeg on box; libsndfile decodes wav/flac/mp3)
++        data, sample_rate = sf.read(str(audio_file), dtype='float32', always_2d=True)
++        waveform = torch.from_numpy(data.T.copy()).mean(dim=0)  # mono
+         waveform = waveform - waveform.mean()
+ 
+         if sample_rate == self.sr:
+diff -ruN third_party/av-benchmark.orig/av_bench/extraction_models.py third_party/av-benchmark/av_bench/extraction_models.py
+--- third_party/av-benchmark.orig/av_bench/extraction_models.py	2026-11-12 15:23:33.003000433 +0800
++++ third_party/av-benchmark/av_bench/extraction_models.py	2026-11-12 15:24:44.582536655 +0800
+@@ -1,3 +1,4 @@
++import os
+ from pathlib import Path
+ 
+ import laion_clap
+@@ -5,53 +6,57 @@
+ import torch.nn as nn
+ import torchaudio
+ from hear21passt.base import get_basic_model
+-from imagebind.models import imagebind_model
+-from msclap import CLAP
+-
+-from av_bench.panns import Cnn14
+-from av_bench.synchformer.synchformer import Synchformer
+ from av_bench.vggish.vggish import VGGish
+ 
++# PATCH: CLAP checkpoint is configurable; the HW requires the *music* checkpoint
++# music_audioset_epoch_15_esc_90.14.pt (upstream default: music_speech_..._89.98.pt)
+ _clap_ckpt_path = Path(
+-    __file__).parent.parent / 'weights' / 'music_speech_audioset_epoch_15_esc_89.98.pt'
++    os.environ.get(
++        'AVB_CLAP_CKPT',
++        Path(__file__).parent.parent / 'weights' / 'music_speech_audioset_epoch_15_esc_89.98.pt'))
+ _syncformer_ckpt_path = Path(__file__).parent.parent / 'weights' / 'synchformer_state_dict.pth'
+ 
+ 
+ class ExtractionModels(nn.Module):
+ 
+-    def __init__(self):
++    # PATCH: only build the requested sub-models (upstream builds all, incl. ImageBind-huge,
++    # MS-CLAP, Synchformer and PANNs which need extra weights/downloads we do not use).
++    def __init__(self, components=('vggish', 'passt', 'laion_clap')):
+         super().__init__()
+ 
+-        features_list = ["2048", "logits"]
+-        self.panns = Cnn14(
+-            features_list=features_list,
+-            sample_rate=16000,
+-            window_size=512,
+-            hop_size=160,
+-            mel_bins=64,
+-            fmin=50,
+-            fmax=8000,
+-            classes_num=527,
+-        )
+-
+-        self.panns = self.panns.eval()
+-        self.vggish = VGGish(postprocess=False).eval()
+-
+-        # before the prediction head
+-        # https://github.com/kkoutini/passt_hear21/blob/5f1cce6a54b88faf0abad82ed428355e7931213a/hear21passt/models/passt.py#L440-L441
+-        self.passt_model = get_basic_model(mode="all")
+-        self.passt_model.eval()
+-
+-        self.imagebind = imagebind_model.imagebind_huge(pretrained=True).eval()
+-
+-        self.laion_clap = laion_clap.CLAP_Module(enable_fusion=False, amodel='HTSAT-base').eval()
+-        self.laion_clap.load_ckpt(_clap_ckpt_path, verbose=False)
+-
+-        self.ms_clap = CLAP(version='2023', use_cuda=True)
+-
+-        self.synchformer = Synchformer().eval()
+-        sd = torch.load(_syncformer_ckpt_path, weights_only=True)
+-        self.synchformer.load_state_dict(sd)
++        if 'panns' in components:
++            from av_bench.panns import Cnn14
++            self.panns = Cnn14(
++                features_list=["2048", "logits"],
++                sample_rate=16000,
++                window_size=512,
++                hop_size=160,
++                mel_bins=64,
++                fmin=50,
++                fmax=8000,
++                classes_num=527,
++            ).eval()
++        if 'vggish' in components:
++            self.vggish = VGGish(postprocess=False).eval()
++        if 'passt' in components:
++            # before the prediction head
++            self.passt_model = get_basic_model(mode="all")
++            self.passt_model.eval()
++        if 'imagebind' in components:
++            from imagebind.models import imagebind_model
++            self.imagebind = imagebind_model.imagebind_huge(pretrained=True).eval()
++        if 'laion_clap' in components:
++            self.laion_clap = laion_clap.CLAP_Module(enable_fusion=False,
++                                                     amodel='HTSAT-base').eval()
++            self.laion_clap.load_ckpt(_clap_ckpt_path, verbose=False)
++        if 'ms_clap' in components:
++            from msclap import CLAP
++            self.ms_clap = CLAP(version='2023', use_cuda=True)
++        if 'synchformer' in components:
++            from av_bench.synchformer.synchformer import Synchformer
++            self.synchformer = Synchformer().eval()
++            sd = torch.load(_syncformer_ckpt_path, weights_only=True)
++            self.synchformer.load_state_dict(sd)
+ 
+         # from synchformer
+         self.sync_mel_spectrogram = torchaudio.transforms.MelSpectrogram(
+diff -ruN third_party/av-benchmark.orig/av_bench/extract.py third_party/av-benchmark/av_bench/extract.py
+--- third_party/av-benchmark.orig/av_bench/extract.py	2026-11-12 15:23:33.002977425 +0800
++++ third_party/av-benchmark/av_bench/extract.py	2026-11-12 15:24:39.686553923 +0800
+@@ -3,19 +3,17 @@
+ 
+ import torch
+ import torchaudio
+-from imagebind.models.imagebind_model import ModalityType
+ from torch.utils.data import DataLoader
+ from tqdm import tqdm
+ 
+ from av_bench.data.audio_dataset import (AudioDataset, ImageBindAudioDataset,
+                                          SynchformerAudioDataset, pad_or_truncate)
+ from av_bench.extraction_models import ExtractionModels
+-from av_bench.synchformer.synchformer import Synchformer
+ 
+ log = logging.getLogger()
+ 
+ 
+-def encode_audio_with_sync(synchformer: Synchformer, x: torch.Tensor,
++def encode_audio_with_sync(synchformer, x: torch.Tensor,
+                            mel: torchaudio.transforms.MelSpectrogram) -> torch.Tensor:
+     b, t = x.shape
+ 
+@@ -49,32 +47,39 @@
+             num_workers: int = 32,
+             device: str,
+             skip_video_related: bool = False,
+-            skip_clap: bool = False):
++            skip_clap: bool = False,
++            components=None):
+ 
+-    audios = sorted(list(audio_path.glob('*.wav')) + list(audio_path.glob('*.flac')),
++    # PATCH: also accept .mp3 (decoded with soundfile, see data/audio_dataset.py)
++    audios = sorted(list(audio_path.glob('*.wav')) + list(audio_path.glob('*.flac')) +
++                    list(audio_path.glob('*.mp3')),
+                     key=lambda x: x.stem)
+ 
+     log.info(f'{len(audios)} audios found in {audio_path}')
+ 
+-    models = ExtractionModels().to(device).eval()
++    # PATCH: build only the sub-models we use (FD-VGG, KL-PaSST, CLAP); see extraction_models.py
++    if components is None:
++        components = ('vggish', 'passt') + (() if skip_clap else ('laion_clap',))
++    models = ExtractionModels(components).to(device).eval()
+     dataset = AudioDataset(audios, audio_length=audio_length, sr=16000)
+     loader = DataLoader(dataset, batch_size=batch_size, num_workers=num_workers, pin_memory=True)
+ 
+     # extract features with PANN
+-    out_dict = {}
+-    for wav, filename in tqdm(loader):
+-        wav = wav.squeeze(1).float().to(device)
++    if 'panns' in components:
++        out_dict = {}
++        for wav, filename in tqdm(loader):
++            wav = wav.squeeze(1).float().to(device)
+ 
+-        features = models.panns(wav)
+-        features = {k: v.cpu() for k, v in features.items()}
+-        for i, f_name in enumerate(filename):
+-            out_dict[f_name] = {k: v[i] for k, v in features.items()}
++            features = models.panns(wav)
++            features = {k: v.cpu() for k, v in features.items()}
++            for i, f_name in enumerate(filename):
++                out_dict[f_name] = {k: v[i] for k, v in features.items()}
+ 
+-    output_path.mkdir(parents=True, exist_ok=True)
+-    pann_feature_path = output_path / 'pann_features.pth'
+-    log.info(f'Saving {len(out_dict)} features to {pann_feature_path}')
+-    torch.save(out_dict, pann_feature_path)
+-    del out_dict
++        output_path.mkdir(parents=True, exist_ok=True)
++        pann_feature_path = output_path / 'pann_features.pth'
++        log.info(f'Saving {len(out_dict)} features to {pann_feature_path}')
++        torch.save(out_dict, pann_feature_path)
++        del out_dict
+ 
+     # extract features with VGGish
+     out_dict = {}
+@@ -92,6 +97,7 @@
+ 
+     if not skip_video_related:
+         # extract features with ImageBind
++        from imagebind.models.imagebind_model import ModalityType
+         dataset = ImageBindAudioDataset(audios)
+         loader = DataLoader(dataset,
+                             batch_size=batch_size,
+@@ -146,7 +152,7 @@
+         torch.save(out_dict, clap_feature_path)
+ 
+         out_dict = {}
+-        for i in range(0, len(audios), batch_size):
++        for i in range(0, len(audios) if 'ms_clap' in components else 0, batch_size):
+             audio_paths = audios[i:i + batch_size]
+             ms_features = models.ms_clap.get_audio_embeddings(audio_paths).cpu().squeeze()
+             for f_name, f in zip(audio_paths, ms_features):
+diff -ruN third_party/av-benchmark.orig/av_bench/vggish/vggish.py third_party/av-benchmark/av_bench/vggish/vggish.py
+--- third_party/av-benchmark.orig/av_bench/vggish/vggish.py	2026-11-12 15:23:33.003959007 +0800
++++ third_party/av-benchmark/av_bench/vggish/vggish.py	2026-11-12 15:24:54.171502837 +0800
+@@ -1,5 +1,7 @@
+ # converted from https://github.com/harritaylor/torchvggish
+ 
++import os
++
+ import numpy as np
+ import torch
+ import torch.nn as nn
+@@ -51,7 +53,12 @@
+     def __init__(self, device=None, pretrained=True, preprocess=True, postprocess=True):
+         super().__init__(make_layers())
+         if pretrained:
+-            state_dict = torch.hub.load('harritaylor/torchvggish', 'vggish').state_dict()
++            # PATCH: load local weights (AVB_VGGISH_CKPT) instead of torch.hub (no git, shared ~/.cache)
++            ckpt = os.environ.get('AVB_VGGISH_CKPT')
++            if ckpt:
++                state_dict = torch.load(ckpt, map_location='cpu', weights_only=True)
++            else:
++                state_dict = torch.hub.load('harritaylor/torchvggish', 'vggish').state_dict()
+             super().load_state_dict(state_dict, strict=False)
+ 
+         if device is None:

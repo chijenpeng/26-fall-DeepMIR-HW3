@@ -1,0 +1,13 @@
+{
+  "gen_dir": "outputs/cfg_s10",
+  "ref_dir": "data/audio_mp3",
+  "audio_length": 10.0,
+  "clap_ckpt": "music_audioset_epoch_15_esc_90.14.pt",
+  "n_gen": 100,
+  "n_ref": 5367,
+  "FD-VGG": 7.768303267278071,
+  "FD-PaSST": 851.6677940827175,
+  "paired": false,
+  "n_pairs": 0,
+  "KL-PaSST": null
+}

@@ -1,0 +1,16 @@
+{
+  "gen_dir": "outputs/cfg_s10",
+  "ref_dir": "outputs/retrieval/retrieved_audio",
+  "audio_length": 10.0,
+  "clap_ckpt": "music_audioset_epoch_15_esc_90.14.pt",
+  "n_gen": 100,
+  "n_ref": 100,
+  "FD-VGG": 1.929881632832931,
+  "FD-PaSST": 721.7598844310837,
+  "paired": true,
+  "n_pairs": 100,
+  "KL-PaSST": 0.9586445689201355,
+  "KL-PaSST-sigmoid": 4.075990676879883,
+  "CLAP": 0.32953131198883057,
+  "n_clap": 100
+}
