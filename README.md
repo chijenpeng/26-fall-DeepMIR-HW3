@@ -58,6 +58,19 @@ The fork URLs and the patch command are not re-tested after cleanup.)
 
 The CFG sweep (scales 3, 10, 1, 5, plus 15) is in `run_all.sh` and `run_apg.sh` (hard-coded to the author's machine paths; edit the `cd`).
 
+## Extra analysis (FD decomposition, per-clip CFG vs APG)
+Both scripts run from this folder after the evaluation runs exist and use the `.venv-eval` env (scipy is already in `eval_tools/requirements-eval.in`; the `plot` stage also needs `pip install matplotlib`). Each has a `compute` stage (writes to `results/`) and a `plot` stage (figures to `outputs/figs/`).
+- `analysis_fd_diversity.py` splits FD-VGG into a mean term and a covariance term, and reports Tr(Sigma) as a diversity measure, from the cached VGGish features in `outputs/_eval_cache/` (created by `evaluate.py`) and `third_party/av-benchmark`. Output: `results/fd_diversity.csv`, `results/fd_diversity.json`.
+  ```bash
+  .venv-eval/bin/python analysis_fd_diversity.py compute
+  .venv-eval/bin/python analysis_fd_diversity.py plot
+  ```
+- `analysis_perclip.py` computes per-clip clipping fraction, peak, RMS, crest factor and high-frequency (>5 kHz) energy ratio for `cfg_s10`, `cfg_s15`, `apg_s10`, `apg_s15` (decoded mp3 in `outputs/<run>/`), with paired Wilcoxon tests. Output: `results/perclip_cfg_vs_apg.csv` and `results/perclip_summary.txt`.
+  ```bash
+  .venv-eval/bin/python analysis_perclip.py compute
+  .venv-eval/bin/python analysis_perclip.py plot
+  ```
+
 ## Files
 | File | Description |
 | --- | --- |
@@ -69,9 +82,10 @@ The CFG sweep (scales 3, 10, 1, 5, plus 15) is in `run_all.sh` and `run_apg.sh` 
 | `retrieve.py` | LAION-CLAP text-to-audio retrieval over MusicCaps |
 | `evaluate.py` | FD-VGG / KL-PaSST / CLAP score on top of patched av-benchmark |
 | `verify_outputs.py` | Sanity check of generated dirs (count, duration, finite, clipping) |
+| `analysis_fd_diversity.py`, `analysis_perclip.py` | FD decomposition / diversity and per-clip CFG vs APG statistics |
 | `run_all.sh`, `run_apg.sh` | Sweep scripts that produced `results/` |
 | `eval_tools/` | `av-benchmark-hw3.patch`, `requirements-eval.in/.txt`, `requirements-clap.txt`, `run_eval_all.sh` |
-| `results/` | Metric JSONs, `combined.csv`, `retrieval.json`, `retrieval_top5.csv` |
+| `results/` | Metric JSONs, `combined.csv`, `retrieval.json`, `retrieval_top5.csv`, `fd_diversity.csv/.json`, `perclip_cfg_vs_apg.csv` |
 | `test.csv` | The 100 test captions (`id,caption`) |
 | `requirements.txt` | Generation env |
 
